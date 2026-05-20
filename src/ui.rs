@@ -502,6 +502,13 @@ fn render_terminal_content(
                 let x = area.x + col as u16;
                 let y = area.y + row as u16;
 
+                if cell.is_wide_continuation() {
+                    if let Some(buf_cell) = buf.cell_mut((x, y)) {
+                        buf_cell.reset();
+                    }
+                    continue;
+                }
+
                 let contents = cell.contents();
                 let display_char = if contents.is_empty() { " " } else { contents };
 

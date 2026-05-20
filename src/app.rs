@@ -1947,6 +1947,9 @@ fn extract_selected_text(pane: &Pane, sr: u32, sc: u32, er: u32, ec: u32) -> Str
 
         for col in col_start..=col_end {
             if let Some(cell) = screen.cell(row as u16, col as u16) {
+                if cell.is_wide_continuation() {
+                    continue;
+                }
                 let contents = cell.contents();
                 if contents.is_empty() {
                     line.push(' ');
