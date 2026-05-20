@@ -72,19 +72,20 @@ impl Preview {
         // Security: resolve symlinks and verify the real path is within the
         // workspace boundary. canonicalize() follows symlinks, so a symlink
         // pointing outside the boundary will be correctly rejected.
-        if let Some(boundary) = boundary {
+        // resolved_path is then used for all subsequent file operations to
+        // close the TOCTOU window between the boundary check and file open.
+        let resolved_path: PathBuf = if let Some(boundary) = boundary {
             match path.canonicalize() {
-                Ok(real_path) => {
-                    if !real_path.starts_with(boundary) {
-                        self.file_path = Some(path.to_path_buf());
-                        self.scroll_offset = 0;
-                        self.h_scroll_offset = 0;
-                        self.lines = vec!["セキュリティ: ワークスペース外のファイルは表示できません".to_string()];
-                        self.highlighted_lines.clear();
-                        self.is_binary = false;
-                        self.image_protocol = None;
-                        return;
-                    }
+                Ok(real) if real.starts_with(boundary) => real,
+                Ok(_) => {
+                    self.file_path = Some(path.to_path_buf());
+                    self.scroll_offset = 0;
+                    self.h_scroll_offset = 0;
+                    self.lines = vec!["セキュリティ: ワークスペース外のファイルは表示できません".to_string()];
+                    self.highlighted_lines.clear();
+                    self.is_binary = false;
+                    self.image_protocol = None;
+                    return;
                 }
                 Err(_) => {
                     // Cannot resolve the path (dangling symlink, permission error, etc.)
@@ -98,7 +99,9 @@ impl Preview {
                     return;
                 }
             }
-        }
+        } else {
+            path.to_path_buf()
+        };
 
         self.file_path = Some(path.to_path_buf());
         self.scroll_offset = 0;
@@ -108,7 +111,7 @@ impl Preview {
         self.is_binary = false;
         self.image_protocol = None;
 
-        let metadata = match std::fs::metadata(path) {
+        let metadata = match std::fs::metadata(&resolved_path) {
             Ok(m) => m,
             Err(_) => {
                 self.lines = vec!["ファイルを読み込めませんでした".to_string()];
@@ -132,7 +135,7 @@ impl Preview {
                 return;
             }
             if let Some(picker) = picker {
-                match image::ImageReader::open(path)
+                match image::ImageReader::open(&resolved_path)
                     .and_then(|r| r.with_guessed_format())
                     .map_err(|e| e.to_string())
                     .and_then(|r| {
@@ -165,13 +168,13 @@ impl Preview {
             return;
         }
 
-        if is_binary_file(path) {
+        if is_binary_file(&resolved_path) {
             self.is_binary = true;
             return;
         }
 
         // Read text file
-        match File::open(path) {
+        match File::open(&resolved_path) {
             Ok(file) => {
                 let reader = BufReader::new(file);
                 self.lines = reader

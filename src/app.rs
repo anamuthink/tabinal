@@ -512,6 +512,36 @@ impl App {
         }
     }
 
+    /// Copy the current selection to the clipboard. Returns true if text was copied.
+    /// Does NOT clear `self.selection` — callers decide that.
+    fn copy_current_selection(&mut self) -> bool {
+        let sel = match self.selection.as_ref() {
+            Some(s) => s.clone(),
+            None => return false,
+        };
+        let (sr, sc, er, ec) = sel.normalized();
+        if sr == er && sc == ec {
+            return false;
+        }
+        let text = match sel.target {
+            SelectionTarget::Pane(pane_id) => self
+                .ws()
+                .panes
+                .get(&pane_id)
+                .map(|p| extract_selected_text(p, sr, sc, er, ec))
+                .unwrap_or_default(),
+            SelectionTarget::Preview => {
+                extract_preview_selected_text(&self.ws().preview, sr, sc, er, ec)
+            }
+        };
+        if !text.is_empty() {
+            self.copy_to_clipboard(&text);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Drop the current selection if it targets the preview. Called
     /// whenever preview state shifts (scroll, new file) so the
     /// highlighted range can't point at different text than what
@@ -727,32 +757,11 @@ impl App {
 
         // Ctrl+C — if text is selected, copy to clipboard instead of sending SIGINT
         if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
-            if let Some(ref sel) = self.selection.clone() {
-                let (sr, sc, er, ec) = sel.normalized();
-                if sr != er || sc != ec {
-                    let text = match sel.target {
-                        SelectionTarget::Pane(pane_id) => self
-                            .ws()
-                            .panes
-                            .get(&pane_id)
-                            .map(|p| extract_selected_text(p, sr, sc, er, ec))
-                            .unwrap_or_default(),
-                        SelectionTarget::Preview => extract_preview_selected_text(
-                            &self.ws().preview,
-                            sr,
-                            sc,
-                            er,
-                            ec,
-                        ),
-                    };
-                    if !text.is_empty() {
-                        self.copy_to_clipboard(&text);
-                    }
-                    self.selection = None;
-                    return Ok(true);
-                }
+            if self.selection.is_some() && self.copy_current_selection() {
+                self.selection = None;
+                return Ok(true);
             }
-            // No selection — fall through to forward Ctrl+C to PTY
+            // No selection (or zero-width) — fall through to forward Ctrl+C to PTY
         }
 
         // Alt+1 .. Alt+9 — jump to tab N (not configurable — index is dynamic)
@@ -1133,8 +1142,6 @@ impl App {
         let ids = ws.layout.collect_pane_ids();
         let tree_visible = ws.file_tree_visible;
         let preview_active = ws.preview.is_active();
-        let _swapped = false; // preview position doesn't affect focus order
-
         match ws.focus_target {
             FocusTarget::FileTree => {
                 // File tree → preview (if active) or first pane
@@ -1329,6 +1336,50 @@ impl App {
             col >= border_col.saturating_sub(1) && col <= border_col
         } else {
             false
+        }
+    }
+
+    fn handle_scroll(&mut self, up: bool, col: u16, row: u16) {
+        if let Some(rect) = self.ws().last_file_tree_rect {
+            if col >= rect.x && col < rect.x + rect.width
+                && row >= rect.y && row < rect.y + rect.height
+            {
+                if up { self.ws_mut().file_tree.scroll_up(3); }
+                else   { self.ws_mut().file_tree.scroll_down(3); }
+                return;
+            }
+        }
+        if let Some(rect) = self.ws().last_preview_rect {
+            if col >= rect.x && col < rect.x + rect.width
+                && row >= rect.y && row < rect.y + rect.height
+            {
+                if up { self.ws_mut().preview.scroll_up(3); }
+                else   { self.ws_mut().preview.scroll_down(3); }
+                return;
+            }
+        }
+        let pane_count = self.ws().last_pane_rects.len();
+        for i in 0..pane_count {
+            let (pane_id, rect) = self.ws().last_pane_rects[i];
+            if col >= rect.x && col < rect.x + rect.width
+                && row >= rect.y && row < rect.y + rect.height
+            {
+                let (altbuf, mouse_cap) = self
+                    .ws()
+                    .panes
+                    .get(&pane_id)
+                    .map(|p| (p.is_alternate_screen(), p.is_mouse_capture_enabled()))
+                    .unwrap_or((false, false));
+                if altbuf {
+                    let bytes = encode_wheel_event(up, col - rect.x, row - rect.y, mouse_cap);
+                    if let Some(pane) = self.ws_mut().panes.get_mut(&pane_id) {
+                        let _ = pane.write_input(&bytes);
+                    }
+                } else if let Some(pane) = self.ws().panes.get(&pane_id) {
+                    if up { pane.scroll_up(3); } else { pane.scroll_down(3); }
+                }
+                return;
+            }
         }
     }
 
@@ -1648,121 +1699,14 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) => {
                 self.dragging = None;
 
-                // Copy selected text to clipboard
-                if let Some(sel) = self.selection.clone() {
-                    let (sr, sc, er, ec) = sel.normalized();
-                    if sr != er || sc != ec {
-                        let text = match sel.target {
-                            SelectionTarget::Pane(pane_id) => self
-                                .ws()
-                                .panes
-                                .get(&pane_id)
-                                .map(|p| extract_selected_text(p, sr, sc, er, ec))
-                                .unwrap_or_default(),
-                            SelectionTarget::Preview => extract_preview_selected_text(
-                                &self.ws().preview,
-                                sr,
-                                sc,
-                                er,
-                                ec,
-                            ),
-                        };
-                        if !text.is_empty() {
-                            self.copy_to_clipboard(&text);
-                        }
-                    }
-                    // Keep selection visible until next click
-                }
+                // Copy selected text to clipboard; keep selection visible until next click
+                self.copy_current_selection();
             }
             MouseEventKind::ScrollUp => {
-                let col = mouse.column;
-                let row = mouse.row;
-
-                if let Some(rect) = self.ws().last_file_tree_rect {
-                    if col >= rect.x && col < rect.x + rect.width
-                        && row >= rect.y && row < rect.y + rect.height
-                    {
-                        self.ws_mut().file_tree.scroll_up(3);
-                        return;
-                    }
-                }
-                if let Some(rect) = self.ws().last_preview_rect {
-                    if col >= rect.x && col < rect.x + rect.width
-                        && row >= rect.y && row < rect.y + rect.height
-                    {
-                        self.ws_mut().preview.scroll_up(3);
-                        return;
-                    }
-                }
-                let pane_count = self.ws().last_pane_rects.len();
-                for i in 0..pane_count {
-                    let (pane_id, rect) = self.ws().last_pane_rects[i];
-                    if col >= rect.x && col < rect.x + rect.width
-                        && row >= rect.y && row < rect.y + rect.height
-                    {
-                        let (altbuf, mouse_cap) = self
-                            .ws()
-                            .panes
-                            .get(&pane_id)
-                            .map(|p| (p.is_alternate_screen(), p.is_mouse_capture_enabled()))
-                            .unwrap_or((false, false));
-                        if altbuf {
-                            let bytes =
-                                encode_wheel_event(true, col - rect.x, row - rect.y, mouse_cap);
-                            if let Some(pane) = self.ws_mut().panes.get_mut(&pane_id) {
-                                let _ = pane.write_input(&bytes);
-                            }
-                        } else if let Some(pane) = self.ws().panes.get(&pane_id) {
-                            pane.scroll_up(3);
-                        }
-                        return;
-                    }
-                }
+                self.handle_scroll(true, mouse.column, mouse.row);
             }
             MouseEventKind::ScrollDown => {
-                let col = mouse.column;
-                let row = mouse.row;
-
-                if let Some(rect) = self.ws().last_file_tree_rect {
-                    if col >= rect.x && col < rect.x + rect.width
-                        && row >= rect.y && row < rect.y + rect.height
-                    {
-                        self.ws_mut().file_tree.scroll_down(3);
-                        return;
-                    }
-                }
-                if let Some(rect) = self.ws().last_preview_rect {
-                    if col >= rect.x && col < rect.x + rect.width
-                        && row >= rect.y && row < rect.y + rect.height
-                    {
-                        self.ws_mut().preview.scroll_down(3);
-                        return;
-                    }
-                }
-                let pane_count = self.ws().last_pane_rects.len();
-                for i in 0..pane_count {
-                    let (pane_id, rect) = self.ws().last_pane_rects[i];
-                    if col >= rect.x && col < rect.x + rect.width
-                        && row >= rect.y && row < rect.y + rect.height
-                    {
-                        let (altbuf, mouse_cap) = self
-                            .ws()
-                            .panes
-                            .get(&pane_id)
-                            .map(|p| (p.is_alternate_screen(), p.is_mouse_capture_enabled()))
-                            .unwrap_or((false, false));
-                        if altbuf {
-                            let bytes =
-                                encode_wheel_event(false, col - rect.x, row - rect.y, mouse_cap);
-                            if let Some(pane) = self.ws_mut().panes.get_mut(&pane_id) {
-                                let _ = pane.write_input(&bytes);
-                            }
-                        } else if let Some(pane) = self.ws().panes.get(&pane_id) {
-                            pane.scroll_down(3);
-                        }
-                        return;
-                    }
-                }
+                self.handle_scroll(false, mouse.column, mouse.row);
             }
             MouseEventKind::ScrollLeft => {
                 let col = mouse.column;

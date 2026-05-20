@@ -12,7 +12,6 @@ const BG: Color = Color::Rgb(0x0d, 0x11, 0x17);
 const BORDER: Color = Color::Rgb(0x2d, 0x33, 0x3b);
 const TEXT: Color = Color::Rgb(0xe6, 0xed, 0xf3);
 const TEXT_DIM: Color = Color::Rgb(0x6e, 0x76, 0x81);
-const ACCENT_BLUE: Color = Color::Rgb(0x58, 0xa6, 0xff);
 const ACCENT_PRIMARY: Color = Color::Rgb(0xd9, 0x77, 0x57);
 const HEADER_BG: Color = Color::Rgb(0x16, 0x1b, 0x22);
 const ACTIVE_TAB_BG: Color = Color::Rgb(0x0d, 0x11, 0x17);
@@ -532,8 +531,8 @@ fn render_terminal_content(
                 });
                 let final_style = if has_selection {
                     Style::default()
-                        .fg(Color::Rgb(0x0d, 0x11, 0x17))
-                        .bg(Color::Rgb(0x58, 0xa6, 0xff))
+                        .fg(BG)
+                        .bg(ACCENT_PRIMARY)
                 } else {
                     style
                 };
@@ -787,8 +786,8 @@ fn render_preview(app: &mut App, frame: &mut Frame, area: Rect) {
                         if let Some(cell) = buf.cell_mut((x, y)) {
                             cell.set_style(
                                 Style::default()
-                                    .fg(Color::Rgb(0x0d, 0x11, 0x17))
-                                    .bg(Color::Rgb(0x58, 0xa6, 0xff)),
+                                    .fg(BG)
+                                    .bg(ACCENT_PRIMARY),
                             );
                         }
                     }

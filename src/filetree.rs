@@ -151,10 +151,7 @@ impl FileTree {
 
     /// Rebuild the flattened entry list from the tree structure.
     fn rebuild_flat(&mut self) {
-        self.flat_entries.clear();
-        for entry in &self.entries {
-            self.flat_entries.push(entry.clone());
-        }
+        self.flat_entries.clone_from(&self.entries);
     }
 
     /// Get the flattened list of visible entries.
