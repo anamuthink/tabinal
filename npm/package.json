@@ -1,6 +1,6 @@
 {
   "name": "tabinal-cli",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A general-purpose TUI terminal multiplexer with split panes, tabs, and file tree",
   "bin": {
     "tabinal": "bin/cli.js"
