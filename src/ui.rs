@@ -514,7 +514,7 @@ fn render_terminal_content(
                 if cell.underline() { modifiers |= Modifier::UNDERLINED; }
 
                 let style = if cell.inverse() {
-                    Style::default().fg(bg).bg(fg).add_modifier(modifiers)
+                    Style::default().fg(fg).bg(bg).add_modifier(modifiers | Modifier::REVERSED)
                 } else {
                     Style::default().fg(fg).bg(bg).add_modifier(modifiers)
                 };
