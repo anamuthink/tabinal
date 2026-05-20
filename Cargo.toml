@@ -1,6 +1,6 @@
 [package]
 name = "tabinal"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "A general-purpose TUI terminal multiplexer with split panes, tabs, and file tree"
 
